@@ -425,34 +425,50 @@ const WARMUP_OPTIONS = [
   { label: 'Overtones' },
 ];
 
-// Block durations (minutes)
-const BLOCK_MINS = {
-  warmup:   { short: 2, long: 3 },
-  scales:   3,
-  patterns: 5,
-  intervals: 7,
-  chords:   7,
+// Base ratios for each block (used to distribute session time)
+const BLOCK_RATIOS = {
+  warmup:    0.10,  // ~10%
+  scales:    0.15,  // ~15%
+  patterns:  0.20,  // ~20%
+  intervals: 0.25,  // ~25%
+  chords:    0.30,  // ~30%
 };
 
 function buildPlan(mins) {
-  const warmupMins   = mins <= 20 ? BLOCK_MINS.warmup.short : BLOCK_MINS.warmup.long;
   const warmupChoice = WARMUP_OPTIONS[Math.floor(Math.random() * WARMUP_OPTIONS.length)];
 
-  const blocks = [
-    { id:'warmup',   icon:'🌬️', name:'Warm-Up — ' + warmupChoice.label, mins:warmupMins,              type:'simple'    },
-    { id:'scales',   icon:'🎼', name:'Scales',                           mins:BLOCK_MINS.scales,       type:'scales'    },
-  ];
-  if (mins >= 20) blocks.push({ id:'patterns',  icon:'🔁', name:'Scale Patterns', mins:BLOCK_MINS.patterns,  type:'patterns'  });
-  if (mins >= 30) blocks.push({ id:'intervals', icon:'🎵', name:'Intervals',      mins:BLOCK_MINS.intervals, type:'intervals' });
-  if (mins >= 45) blocks.push({ id:'chords',    icon:'🎹', name:'Chords',         mins:BLOCK_MINS.chords,    type:'chords'    });
+  // Decide which blocks to include based on session length
+  const ids = ['warmup', 'scales'];
+  if (mins >= 20) ids.push('patterns');
+  if (mins >= 30) ids.push('intervals');
+  if (mins >= 45) ids.push('chords');
 
-  // trim from end if total exceeds session
-  let total = blocks.reduce((s,b) => s + b.mins, 0);
-  while (total > mins && blocks.length > 2) {
-    blocks.pop();
-    total = blocks.reduce((s,b) => s + b.mins, 0);
+  // Sum of ratios for included blocks
+  const totalRatio = ids.reduce((s, id) => s + BLOCK_RATIOS[id], 0);
+
+  // Allocate minutes proportionally, round to whole minutes, min 1
+  let allocated = ids.map(id => ({
+    id,
+    mins: Math.max(1, Math.round(mins * BLOCK_RATIOS[id] / totalRatio))
+  }));
+
+  // Fix rounding drift — add/remove from largest block
+  let diff = mins - allocated.reduce((s, b) => s + b.mins, 0);
+  if (diff !== 0) {
+    const largest = allocated.reduce((a, b) => b.mins > a.mins ? b : a);
+    largest.mins += diff;
   }
-  return blocks;
+
+  const icons = { warmup:'🌬️', scales:'🎼', patterns:'🔁', intervals:'🎵', chords:'🎹' };
+  const types = { warmup:'simple', scales:'scales', patterns:'patterns', intervals:'intervals', chords:'chords' };
+
+  return allocated.map(b => ({
+    id:   b.id,
+    icon: icons[b.id],
+    name: b.id === 'warmup' ? 'Warm-Up — ' + warmupChoice.label : b.id.charAt(0).toUpperCase() + b.id.slice(1).replace('patterns','Scale Patterns').replace('intervals','Intervals').replace('chords','Chords').replace('scales','Scales'),
+    mins: b.mins,
+    type: types[b.id],
+  }));
 }
 
 // ── STATE ─────────────────────────────────────────────
@@ -466,6 +482,10 @@ let audioCtx       = null;
 const TIME_PRESETS = [15, 20, 30, 45, 60, 90];
 
 // ── AUDIO ─────────────────────────────────────────────
+function fmt(s) {
+  return String(Math.floor(s / 60)).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0');
+}
+
 function getAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume();
